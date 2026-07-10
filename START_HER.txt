@@ -1,0 +1,8 @@
+START HER
+
+1. Dobbeltklik på BUILD_WINDOWS_EXE.bat.
+2. Vent, til der står FAERDIG.
+3. Test exe-filen i mappen dist\VMAN Training Planner 1.00.
+4. Upload VMAN_Training_Planner_1.00_Windows.zip til Dropbox.
+
+Send hele zipfilen til brugerne — ikke kun exe-filen.
