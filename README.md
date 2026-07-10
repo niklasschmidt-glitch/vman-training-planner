@@ -1,0 +1,1 @@
+# vman-training-planner-build
