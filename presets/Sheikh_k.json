@@ -1,0 +1,87 @@
+{
+  "position": "Keepere",
+  "start_age": "15.0",
+  "xp_at_hard_intensity": "180",
+  "xp_reference_intensity": "Hård",
+  "experience_bonus": {
+    "enabled": false,
+    "ratio": "1.10",
+    "knee": "late"
+  },
+  "start_stats": {
+    "Håndtering": "2",
+    "I luften": "2",
+    "Spring": "2",
+    "En mod en": "2",
+    "Hurtighed": "2",
+    "Acceleration": "2",
+    "Aflevering": "2",
+    "Udholdenhed": "2",
+    "Kampånd": "2",
+    "Lederskab": "2"
+  },
+  "program": [
+    {
+      "type": "phase",
+      "days": 90,
+      "exercise": "Træningskamp",
+      "intensity": "Hård",
+      "training_points": 23,
+      "distribution": null
+    },
+    {
+      "type": "block",
+      "name": "Blok 1",
+      "repetitions": 30,
+      "phases": [
+        {
+          "type": "phase",
+          "days": 2,
+          "exercise": "Dødboldsituationer",
+          "intensity": "Hård",
+          "training_points": 23,
+          "distribution": {
+            "Acceleration": 5,
+            "En mod en": 5,
+            "I luften": 5,
+            "Spring": 8
+          }
+        },
+        {
+          "type": "phase",
+          "days": 2,
+          "exercise": "Teknik",
+          "intensity": "Hård",
+          "training_points": 23,
+          "distribution": {
+            "Aflevering": 3,
+            "Håndtering": 10,
+            "En mod en": 5,
+            "I luften": 5
+          }
+        },
+        {
+          "type": "phase",
+          "days": 1,
+          "exercise": "Fysisk træning",
+          "intensity": "Hård",
+          "training_points": 23,
+          "distribution": {
+            "Hurtighed": 10,
+            "Udholdenhed": 5,
+            "Kampånd": 4,
+            "Spring": 4
+          }
+        },
+        {
+          "type": "phase",
+          "days": 2,
+          "exercise": "Træningskamp",
+          "intensity": "Hård",
+          "training_points": 23,
+          "distribution": null
+        }
+      ]
+    }
+  ]
+}

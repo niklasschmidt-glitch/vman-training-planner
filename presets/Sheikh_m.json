@@ -1,0 +1,88 @@
+{
+  "position": "Midtbane",
+  "start_age": "15.0",
+  "xp_at_hard_intensity": "180",
+  "xp_reference_intensity": "Hård",
+  "experience_bonus": {
+    "enabled": false,
+    "ratio": "1.10",
+    "knee": "late"
+  },
+  "start_stats": {
+    "Hurtighed": "2",
+    "Acceleration": "2",
+    "Udholdenhed": "2",
+    "Aflevering": "2",
+    "Afslutning": "2",
+    "Dribling": "2",
+    "Tackling": "2",
+    "Dødboldsituationer": "2",
+    "Lederskab": "2",
+    "Kampånd": "2"
+  },
+  "program": [
+    {
+      "type": "phase",
+      "days": 90,
+      "exercise": "Træningskamp",
+      "intensity": "Hård",
+      "training_points": 23,
+      "distribution": null
+    },
+    {
+      "type": "block",
+      "name": "Blok 1",
+      "repetitions": 30,
+      "phases": [
+        {
+          "type": "phase",
+          "days": 2,
+          "exercise": "Teknik",
+          "intensity": "Hård",
+          "training_points": 23,
+          "distribution": {
+            "Aflevering": 5,
+            "Afslutning": 4,
+            "Dribling": 4,
+            "Tackling": 8,
+            "Dødboldsituationer": 2
+          }
+        },
+        {
+          "type": "phase",
+          "days": 2,
+          "exercise": "Offensiv træning",
+          "intensity": "Hård",
+          "training_points": 23,
+          "distribution": {
+            "Hurtighed": 8,
+            "Kampånd": 7,
+            "Afslutning": 6,
+            "Dribling": 2
+          }
+        },
+        {
+          "type": "phase",
+          "days": 2,
+          "exercise": "Én i midten",
+          "intensity": "Hård",
+          "training_points": 23,
+          "distribution": {
+            "Acceleration": 4,
+            "Aflevering": 5,
+            "Udholdenhed": 10,
+            "Dribling": 4
+          }
+        },
+        {
+          "type": "phase",
+          "days": 1,
+          "exercise": "Træningskamp",
+          "intensity": "Hård",
+          "training_points": 23,
+          "distribution": null
+        }
+      ]
+    }
+  ]
+}
