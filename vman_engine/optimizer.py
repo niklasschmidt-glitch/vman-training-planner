@@ -149,12 +149,13 @@ def _apply_intensity_schedule(
     position = normalize_position(position)
     daily: List[Tuple[str, int, Optional[Dict[str, int]]]] = []
     day = 1
-    for phase in program or []:
-        for _ in range(max(1, int(phase.days))):
-            exercise = str(phase.exercise)
-            points = 24 if _is_boost_day(day, allow_boost, boost_uses, boost_period) else 23
-            daily.append((exercise, points, _distribution_for_exercise(position, exercise, weights, points)))
-            day += 1
+    # expand_program håndterer både almindelige sessioner og indlejrede
+    # TrainingCycle-objekter. Intensitetsrytmen lægges derefter på dag for dag.
+    for exercise, _distribution, _original_points in expand_program(program or []):
+        exercise = str(exercise)
+        points = 24 if _is_boost_day(day, allow_boost, boost_uses, boost_period) else 23
+        daily.append((exercise, points, _distribution_for_exercise(position, exercise, weights, points)))
+        day += 1
     return _compress_daily_sequence(daily)
 
 
@@ -905,6 +906,25 @@ def _clone_program(program: List[TrainingInstruction]) -> List[TrainingInstructi
     return cloned
 
 
+def _flatten_program_for_mutation(program: List[TrainingInstruction]) -> List[TrainingInstruction]:
+    """Fold almindelige sessioner og TrainingCycle ud til en sikker mutationsliste.
+
+    Queen Seeker genbruger tidligere topresultater som seeds. Ved Fast rul kan
+    disse seeds indeholde TrainingCycle-objekter, som ikke selv har attributten
+    ``exercise``. Mutation foregår derfor på den præcise daglige sekvens og
+    komprimeres bagefter til almindelige TrainingInstruction-faser. Den valgte
+    Fast rul-struktur bliver lagt på igen af constraint-trinnet efter mutation.
+    """
+    daily: List[Tuple[str, int, Optional[Dict[str, int]]]] = []
+    for exercise, distribution, points in expand_program(program or []):
+        daily.append((
+            str(exercise),
+            int(points),
+            None if distribution is None else dict(distribution),
+        ))
+    return _compress_daily_sequence(daily)
+
+
 def _mutate_seed_program(
     seed_program: List[TrainingInstruction],
     position: str,
@@ -920,6 +940,15 @@ def _mutate_seed_program(
     position = normalize_position(position)
     search_method = _canonical_search_method(search_method)
     program = _clone_program(seed_program)
+    if not program:
+        return _random_candidate_program(
+            position, 1, weights, 1, search_method,
+            allow_boost, boost_uses, boost_period, rng, index,
+        )
+
+    # Queen Seeker kan modtage seeds, der allerede er pakket som Fast rul.
+    # Fold dem ud før mutation, så alle valgte elementer har exercise/days.
+    program = _flatten_program_for_mutation(program)
     if not program:
         return _random_candidate_program(
             position, 1, weights, 1, search_method,

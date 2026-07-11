@@ -304,6 +304,7 @@ ADDITIONAL_UI_TEXT_DA_TO_EN = {
     "Ændringen vil rydde Assistent-søgningen": "This change will clear the Assistant search",
     "Hvis du ændrer data i Spiller-sektionen, ryddes den aktuelle Assistent-søgning, fordi den ikke længere passer til spillerdataene.\n\nVil du fortsætte?": "If you change data in the Player section, the current Assistant search will be cleared because it no longer matches the player data.\n\nDo you want to continue?",
     "Assistenten er nulstillet efter ændringer i Spiller-sektionen.": "Assistant was reset after changes in the Player section.",
+    "Assistenten er klar til den valgte gruppe.": "Assistant is ready for the selected group.",
     "Aktiv gruppe": "Active group",
     "Medtag": "Use",
     "Navn": "Name",
@@ -4698,8 +4699,81 @@ class VmanApp(tk.Tk):
             "avg_rating": avg_rating,
         }
 
+    def _assistant_snapshot_from_group(self, group):
+        """Byg et nyt Assistent-scenarie direkte fra den valgte gruppe.
+
+        Dette må ikke afhænge af et tidligere Assistent-workspace. Når brugeren
+        skifter gruppe, skal position, gennemsnitsalder, XP og egenskaber altid
+        følge med til side 1, så en ny søgning kan startes med det samme.
+        """
+        snapshot = self._assistant_snapshot_from_ui()
+        if not isinstance(group, dict) or not group:
+            return snapshot
+
+        try:
+            position = internal_position(group.get("position", snapshot.get("position", self.position_var.get())))
+        except Exception:
+            position = internal_position(snapshot.get("position", self.position_var.get()))
+        stats = POSITION_STATS[position]
+
+        avg_stats = dict(group.get("avg_stats") or {})
+        if not avg_stats or any(stat not in avg_stats for stat in stats):
+            try:
+                rebuilt = self._build_group_from_players(
+                    group.get("name", "Gruppe"),
+                    group.get("players", []),
+                    group.get("id"),
+                )
+                if rebuilt:
+                    avg_stats = dict(rebuilt.get("avg_stats") or {})
+                    position = internal_position(rebuilt.get("position", position))
+                    stats = POSITION_STATS[position]
+            except Exception:
+                pass
+
+        snapshot["position"] = position
+        snapshot["start_stats"] = {
+            stat: max(0, min(100, int(round(float(avg_stats.get(stat, 2))))))
+            for stat in stats
+        }
+
+        try:
+            start_age = float(group.get("avg_age"))
+        except Exception:
+            start_age = float(snapshot.get("start_age", 15.0))
+        snapshot["start_age"] = start_age
+        period_years = float(snapshot.get("period_years", 10.0) or 10.0)
+        snapshot["period_years"] = period_years
+        snapshot["end_age"] = start_age + period_years
+        snapshot["training_match_until_age"] = min(17.0, snapshot["end_age"])
+
+        if group.get("avg_xp") is not None:
+            try:
+                imported_xp = self._format_imported_training_xp(group.get("avg_xp"))
+                if imported_xp is not None:
+                    snapshot["xp"] = imported_xp
+            except Exception:
+                snapshot["xp"] = str(group.get("avg_xp"))
+
+        group_name = str(group.get("name", "Gruppe") or "Gruppe")
+        snapshot["player_name"] = group_name
+        snapshot["_player_import_status"] = group_name
+        snapshot["player_link"] = ""
+        snapshot["_active_group_id"] = self._group_identifier(group)
+        snapshot["weights"] = dict(POSITION_WEIGHTS[position])
+        snapshot["search_results_pool"] = []
+        snapshot["top_results"] = []
+        snapshot["_assistant_workspace_locked"] = False
+        snapshot["_assistant_reopen_step"] = 0
+        snapshot["_search_has_run"] = False
+        return snapshot
+
     def _reset_assistant_for_active_group(self):
-        self._assistant_reset_from_main_window("Assistenten er nulstillet efter ændringer i Spiller-sektionen.")
+        snapshot = self._assistant_snapshot_from_group(getattr(self, "active_group", None))
+        self._assistant_reset_from_main_window(
+            "Assistenten er klar til den valgte gruppe.",
+            snapshot=snapshot,
+        )
 
 
     def _group_identifier(self, group):
@@ -7102,6 +7176,7 @@ class VmanApp(tk.Tk):
         seed_programs,
         progress_callback,
         worker_count,
+        thread_stop_event=None,
     ):
         """Kør Assistent-søgning i flere processer, så CPU-valget bruges reelt."""
         import concurrent.futures
@@ -7224,7 +7299,7 @@ class VmanApp(tk.Tk):
             pending = set(futures)
             while pending:
                 drain_worker_progress()
-                if getattr(self, "assistant_sim_stop_event", None) is not None and self.assistant_sim_stop_event.is_set():
+                if thread_stop_event is not None and thread_stop_event.is_set():
                     try:
                         process_stop_event.set()
                     except Exception:
@@ -7252,7 +7327,7 @@ class VmanApp(tk.Tk):
             publish_parallel_progress(force=True)
             return combined
         finally:
-            stopped = getattr(self, "assistant_sim_stop_event", None) is not None and self.assistant_sim_stop_event.is_set()
+            stopped = thread_stop_event is not None and thread_stop_event.is_set()
             if stopped:
                 try:
                     process_stop_event.set()
@@ -9273,14 +9348,25 @@ class VmanApp(tk.Tk):
             except Exception:
                 self._assistant_reset_prompt_cooldown = False
 
-    def _assistant_reset_from_main_window(self, reason=""):
+    def _assistant_reset_from_main_window(self, reason="", snapshot=None):
         if getattr(self, "_assistant_resetting_from_main", False):
             return
         try:
             self._assistant_resetting_from_main = True
             self._assistant_recall_snapshot = None
-            self._assistant_stop_simulator_search()
-            self.assistant_data = self._assistant_snapshot_from_ui()
+            try:
+                self._assistant_stop_simulator_search()
+            except Exception:
+                pass
+            # Invalider en eventuel gammel søgetråd. Dens afsluttende beskeder
+            # må ikke lande i den nye gruppes Assistent-workspace.
+            self.assistant_sim_generation = int(getattr(self, "assistant_sim_generation", 0) or 0) + 1
+            self.assistant_sim_queue = None
+            self.assistant_sim_running = False
+            if isinstance(snapshot, dict):
+                self.assistant_data = copy.deepcopy(snapshot)
+            else:
+                self.assistant_data = self._assistant_snapshot_from_ui()
             self.assistant_step = 0
             self.assistant_data["_assistant_workspace_locked"] = False
             self.assistant_data["_assistant_reopen_step"] = 0
@@ -12061,8 +12147,12 @@ class VmanApp(tk.Tk):
                 pass
 
         self.assistant_sim_running = True
-        self.assistant_sim_queue = queue.Queue(maxsize=12)
-        self.assistant_sim_stop_event = threading.Event()
+        self.assistant_sim_generation = int(getattr(self, "assistant_sim_generation", 0) or 0) + 1
+        search_generation = self.assistant_sim_generation
+        local_queue = queue.Queue(maxsize=12)
+        local_stop_event = threading.Event()
+        self.assistant_sim_queue = local_queue
+        self.assistant_sim_stop_event = local_stop_event
         self.assistant_sim_last_progress_applied = 0.0
 
         snapshot = copy.deepcopy(self.assistant_data)
@@ -12075,33 +12165,32 @@ class VmanApp(tk.Tk):
         seed_programs = [copy.deepcopy(seed_result.program)] if seed_result is not None else None
 
         def progress_callback(info):
-            q = getattr(self, "assistant_sim_queue", None)
-            if q is not None:
+            if search_generation != int(getattr(self, "assistant_sim_generation", 0) or 0):
+                return
+            try:
+                local_queue.put_nowait(("progress", info))
+            except queue.Full:
+                # Bevar responsivt UI: smid en gammel progress-opdatering væk og læg den nyeste ind.
                 try:
-                    q.put_nowait(("progress", info))
+                    local_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    local_queue.put_nowait(("progress", info))
                 except queue.Full:
-                    # Bevar responsivt UI: smid en gammel progress-opdatering væk og læg den nyeste ind.
-                    try:
-                        q.get_nowait()
-                    except queue.Empty:
-                        pass
-                    try:
-                        q.put_nowait(("progress", info))
-                    except queue.Full:
-                        pass
+                    pass
 
         def worker():
             def send_final(kind, payload):
-                q = getattr(self, "assistant_sim_queue", None)
-                if q is None:
+                if search_generation != int(getattr(self, "assistant_sim_generation", 0) or 0):
                     return
                 while True:
                     try:
-                        q.put_nowait((kind, payload))
+                        local_queue.put_nowait((kind, payload))
                         return
                     except queue.Full:
                         try:
-                            q.get_nowait()
+                            local_queue.get_nowait()
                         except queue.Empty:
                             time.sleep(0.01)
 
@@ -12117,6 +12206,7 @@ class VmanApp(tk.Tk):
                         seed_programs=seed_programs,
                         progress_callback=progress_callback,
                         worker_count=worker_count,
+                        thread_stop_event=local_stop_event,
                     )
                 else:
                     results = assistant_search_training_plans_timed(
@@ -12145,7 +12235,7 @@ class VmanApp(tk.Tk):
                         training_match_until_age=snapshot.get("training_match_until_age", None),
                         top_n=10,
                         progress_callback=progress_callback,
-                        stop_event=self.assistant_sim_stop_event,
+                        stop_event=local_stop_event,
                         seed_programs=seed_programs,
                     )
                 send_final("done", results)
@@ -12154,7 +12244,7 @@ class VmanApp(tk.Tk):
 
         self.assistant_sim_thread = threading.Thread(target=worker, daemon=True)
         self.assistant_sim_thread.start()
-        self._assistant_poll_simulator_search()
+        self._assistant_poll_simulator_search(search_generation)
 
     def _assistant_stop_simulator_search(self):
         stop_event = getattr(self, "assistant_sim_stop_event", None)
@@ -12165,7 +12255,11 @@ class VmanApp(tk.Tk):
         if hasattr(self, "assistant_stop_sim_button"):
             self.assistant_stop_sim_button.config(text=self._tr("Stopper…"), state="disabled")
 
-    def _assistant_poll_simulator_search(self):
+    def _assistant_poll_simulator_search(self, generation=None):
+        if generation is None:
+            generation = int(getattr(self, "assistant_sim_generation", 0) or 0)
+        if int(generation) != int(getattr(self, "assistant_sim_generation", 0) or 0):
+            return
         q = getattr(self, "assistant_sim_queue", None)
         if q is None:
             return
@@ -12221,7 +12315,7 @@ class VmanApp(tk.Tk):
         if getattr(self, "assistant_sim_running", False):
             if self.assistant_window is not None and self.assistant_window.winfo_exists():
                 delay = 120 if processed else 250
-                self.assistant_window.after(delay, self._assistant_poll_simulator_search)
+                self.assistant_window.after(delay, lambda g=generation: self._assistant_poll_simulator_search(g))
             else:
                 self._assistant_stop_simulator_search()
 
