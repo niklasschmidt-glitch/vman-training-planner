@@ -601,7 +601,7 @@ STAT_ALIASES = {
     "Kampånd": ["Kampånd", "Fighting spirit", "Fight", "Team spirit", "Perseverance"],
     "Håndtering": ["Håndtering", "Handling"],
     "I luften": ["I luften", "Aerial ability", "Aerial", "In the air"],
-    "Spring": ["Spring", "Jumping", "Jump"],
+    "Spring": ["Spring", "Diving", "Diving ability", "Jumping", "Jump"],
     "En mod en": ["En mod en", "One on ones", "One on one", "One-on-ones", "One-on-one"],
 }
 

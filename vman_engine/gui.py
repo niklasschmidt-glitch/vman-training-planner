@@ -300,10 +300,10 @@ ADDITIONAL_UI_TEXT_DA_TO_EN = {
     "Nej": "No",
     "Seneste søgning genkaldt.": "Latest search recalled.",
     "Assistent-søgning ryddes": "Assistant search will be cleared",
-    "Du har ændret i Kontrolcenter. Den seneste Assistent-søgning ryddes, fordi den ikke længere passer til de aktuelle spillerdata.": "You changed the Control Center. The latest Assistant search will be cleared because it no longer matches the current player data.",
+    "Du har ændret i Spiller-sektionen. Den seneste Assistent-søgning ryddes, fordi den ikke længere passer til de aktuelle spillerdata.": "You changed the Player section. The latest Assistant search will be cleared because it no longer matches the current player data.",
     "Ændringen vil rydde Assistent-søgningen": "This change will clear the Assistant search",
-    "Hvis du foretager ændringer i Kontrolcenter, ryddes den aktuelle Assistent-søgning, fordi den ikke længere passer til spillerdataene.\n\nVil du fortsætte?": "If you make changes in the Control Center, the current Assistant search will be cleared because it no longer matches the player data.\n\nDo you want to continue?",
-    "Assistenten er nulstillet efter ændringer i Kontrolcenter.": "Assistant was reset after changes in the Control Center.",
+    "Hvis du ændrer data i Spiller-sektionen, ryddes den aktuelle Assistent-søgning, fordi den ikke længere passer til spillerdataene.\n\nVil du fortsætte?": "If you change data in the Player section, the current Assistant search will be cleared because it no longer matches the player data.\n\nDo you want to continue?",
+    "Assistenten er nulstillet efter ændringer i Spiller-sektionen.": "Assistant was reset after changes in the Player section.",
     "Aktiv gruppe": "Active group",
     "Medtag": "Use",
     "Navn": "Name",
@@ -4699,7 +4699,7 @@ class VmanApp(tk.Tk):
         }
 
     def _reset_assistant_for_active_group(self):
-        self._assistant_reset_from_main_window("Assistenten er nulstillet efter ændringer i Kontrolcenter.")
+        self._assistant_reset_from_main_window("Assistenten er nulstillet efter ændringer i Spiller-sektionen.")
 
 
     def _group_identifier(self, group):
@@ -4989,6 +4989,26 @@ class VmanApp(tk.Tk):
         if not done:
             self.after(80, self._drain_group_avatar_fetch_queue)
 
+    def _sync_assistant_avatar_photo(self, photo):
+        """Mirror the active group portrait into Assistant step 1.
+
+        Step 1 used to copy the current Control Center portrait only once. The
+        Control Center then kept rotating every two seconds, while the Assistant
+        remained frozen. This helper updates the existing Assistant canvas on
+        each normal rotation tick without starting a second timer.
+        """
+        canvas = getattr(self, "assistant_avatar_canvas", None)
+        if canvas is None or photo is None:
+            return
+        try:
+            if int(getattr(self, "assistant_step", -1)) != 0:
+                return
+            if not canvas.winfo_exists():
+                return
+            self._draw_avatar_photo_on_canvas(canvas, photo)
+        except Exception:
+            pass
+
     def _group_avatar_rotate_once(self):
         group = getattr(self, "active_group", None)
         if not group or not group.get("players"):
@@ -5015,6 +5035,7 @@ class VmanApp(tk.Tk):
             self._group_avatar_current_key = key
             self.player_avatar_photo = cache[key]
             self._place_player_avatar_photo(cache[key])
+            self._sync_assistant_avatar_photo(cache[key])
         try:
             self._group_avatar_rotation_after_id = self.after(2000, self._group_avatar_rotate_once)
         except Exception:
@@ -6285,21 +6306,28 @@ class VmanApp(tk.Tk):
 
         return cleaned
 
-    def _schedule_settings_changed(self):
+    def _schedule_settings_changed(self, change_scope="player"):
         try:
+            scope = str(change_scope or "player").strip().lower()
+            pending = str(getattr(self, "_settings_changed_pending_scope", "") or "").lower()
+            # Player is the stronger scope if multiple edits coalesce.
+            if pending != "player":
+                self._settings_changed_pending_scope = scope
             if getattr(self, "_settings_changed_scheduled", False):
                 return
             self._settings_changed_scheduled = True
             self.after_idle(self._run_scheduled_settings_changed)
         except Exception:
             try:
-                self._settings_changed()
+                self._settings_changed(change_scope)
             except Exception:
                 pass
 
     def _run_scheduled_settings_changed(self):
         self._settings_changed_scheduled = False
-        self._settings_changed()
+        scope = getattr(self, "_settings_changed_pending_scope", "player") or "player"
+        self._settings_changed_pending_scope = ""
+        self._settings_changed(scope)
 
     def _on_xp_changed(self, *_):
         if getattr(self, "_xp_normalizing", False):
@@ -6769,7 +6797,7 @@ class VmanApp(tk.Tk):
         self.ebr_knee_var = tk.StringVar(value="linear")
         self.ebr_knee_buttons = []
         self.ebr_knee_canvases = []
-        self.ebr_ratio_var.trace_add("write", lambda *_: self._settings_changed())
+        self.ebr_ratio_var.trace_add("write", lambda *_: self._settings_changed("program"))
 
     def _build_start_stats(self, parent):
         # 2.24/2.39: Egenskaber er integreret i Spiller-sektionen. Rammen er
@@ -9228,7 +9256,7 @@ class VmanApp(tk.Tk):
             parent = self.assistant_window if self.assistant_window is not None and self.assistant_window.winfo_exists() else self
             answer = bool(self._ask_danish_yes_no(
                 "Ændringen vil rydde Assistent-søgningen",
-                "Hvis du foretager ændringer i Kontrolcenter, ryddes den aktuelle Assistent-søgning, fordi den ikke længere passer til spillerdataene.\n\nVil du fortsætte?",
+                "Hvis du ændrer data i Spiller-sektionen, ryddes den aktuelle Assistent-søgning, fordi den ikke længere passer til spillerdataene.\n\nVil du fortsætte?",
                 parent=parent,
                 default=False,
             ))
@@ -11469,40 +11497,63 @@ class VmanApp(tk.Tk):
 
     def _assistant_apply_result_to_main(self, result, simulate_after=True):
         self._push_undo("Importer assistentresultat")
-        snapshot = self.assistant_data
-        position = internal_position(snapshot.get("position", self.position_var.get()))
-        self.position_var.set(self._display_position(position))
-        self.current_stats = POSITION_STATS[position]
-        self._render_start_stats()
+        previous_import_flag = bool(
+            getattr(self, "_assistant_result_import_in_progress", False)
+        )
+        self._assistant_result_import_in_progress = True
+        try:
+            snapshot = self.assistant_data
+            position = internal_position(
+                snapshot.get("position", self.position_var.get())
+            )
+            self.position_var.set(self._display_position(position))
+            self.current_stats = POSITION_STATS[position]
+            self._render_start_stats()
 
-        self._set_main_start_age_decimal(snapshot.get("start_age", "15.0"))
-        self.xp_var.set(str(snapshot.get("xp", self.xp_var.get())))
-        self.xp_reference_intensity_var.set(self._display_intensity(internal_intensity(snapshot.get("xp_reference_intensity", self.xp_reference_intensity_var.get()))))
+            self._set_main_start_age_decimal(snapshot.get("start_age", "15.0"))
+            self.xp_var.set(str(snapshot.get("xp", self.xp_var.get())))
+            self.xp_reference_intensity_var.set(
+                self._display_intensity(
+                    internal_intensity(
+                        snapshot.get(
+                            "xp_reference_intensity",
+                            self.xp_reference_intensity_var.get(),
+                        )
+                    )
+                )
+            )
 
-        ebr_enabled = bool(snapshot.get("ebr_enabled", False))
-        self.ebr_enabled_var.set(ebr_enabled)
-        self.ebr_ratio_var.set(str(snapshot.get("ebr_ratio", "1.10")))
-        self.ebr_knee_var.set(str(snapshot.get("ebr_knee", "linear")))
-        self._on_ebr_toggle()
+            ebr_enabled = bool(snapshot.get("ebr_enabled", False))
+            self.ebr_enabled_var.set(ebr_enabled)
+            self.ebr_ratio_var.set(str(snapshot.get("ebr_ratio", "1.10")))
+            self.ebr_knee_var.set(str(snapshot.get("ebr_knee", "linear")))
+            self._on_ebr_toggle()
 
-        start_stats = snapshot.get("start_stats", {})
-        for stat in POSITION_STATS[position]:
-            try:
-                start_value = int(round(float(start_stats.get(stat, 2.0))))
-            except Exception:
-                start_value = 2
-            self.start_stat_vars[stat].set(str(max(0, min(100, start_value))))
+            start_stats = snapshot.get("start_stats", {})
+            for stat in POSITION_STATS[position]:
+                try:
+                    start_value = int(round(float(start_stats.get(stat, 2.0))))
+                except Exception:
+                    start_value = 2
+                self.start_stat_vars[stat].set(
+                    str(max(0, min(100, start_value)))
+                )
 
-        self._refresh_session_exercise_options(position, reset_if_invalid=False)
-
-        self.program = copy.deepcopy(result.program)
-        self.editing_index = None
-        self.active_position = position
-        self._refresh_program_tree()
-        self._set_template_name(f"Assistent {result.rank} - {result.rating:.2f}", dirty=True)
-        self._settings_changed()
-        if simulate_after:
-            self._simulate()
+            self._refresh_session_exercise_options(
+                position, reset_if_invalid=False
+            )
+            self.program = copy.deepcopy(result.program)
+            self.editing_index = None
+            self.active_position = position
+            self._refresh_program_tree()
+            self._set_template_name(
+                f"Assistent {result.rank} - {result.rating:.2f}", dirty=True
+            )
+            self._settings_changed("program")
+            if simulate_after:
+                self._simulate()
+        finally:
+            self._assistant_result_import_in_progress = previous_import_flag
 
     def _assistant_import_selected_result(self):
         try:
@@ -12357,14 +12408,14 @@ class VmanApp(tk.Tk):
             self.ebr_ratio_spinbox.config(state=state)
 
         self._redraw_ebr_knee_icons()
-        self._settings_changed()
+        self._settings_changed("program")
 
     def _select_ebr_knee(self, value):
         if not self.ebr_enabled_var.get():
             return
         self.ebr_knee_var.set(value)
         self._redraw_ebr_knee_icons()
-        self._settings_changed()
+        self._settings_changed("program")
 
     def _redraw_ebr_knee_icons(self):
         if not hasattr(self, "ebr_knee_canvases"):
@@ -12759,7 +12810,7 @@ class VmanApp(tk.Tk):
         except Exception:
             pass
 
-    def _settings_changed(self):
+    def _settings_changed(self, change_scope="player"):
         if getattr(self, "_restoring_main_parameter_snapshot", False):
             try:
                 self._update_start_rating_label()
@@ -12768,10 +12819,6 @@ class VmanApp(tk.Tk):
                 pass
             return
 
-        # Ændringer i selve Indstillinger-vinduet (sprog, CPU, autosave osv.)
-        # må ikke tælle som ændringer af spillerdata og må derfor ikke rydde
-        # en eksisterende Assistent-søgning. Sprogskift kan indirekte opdatere
-        # comboboxe/trævisninger og dermed ramme denne fælles handler.
         if getattr(self, "_applying_app_settings", False):
             try:
                 self._update_start_rating_label()
@@ -12780,7 +12827,20 @@ class VmanApp(tk.Tk):
                 pass
             return
 
-        can_reset_assistant = not getattr(self, "_undo_suspended", False) and not getattr(self, "_restoring_undo", False)
+        scope = str(change_scope or "player").strip().lower()
+        is_player_change = scope == "player"
+
+        # Importing a result writes the Assistant's unchanged scenario back to
+        # Player while installing the chosen programme. These trace events are
+        # synchronization, not new player input, and must preserve the search.
+        if getattr(self, "_assistant_result_import_in_progress", False):
+            is_player_change = False
+
+        can_reset_assistant = (
+            is_player_change
+            and not getattr(self, "_undo_suspended", False)
+            and not getattr(self, "_restoring_undo", False)
+        )
         if can_reset_assistant and self._assistant_has_search_state():
             if not self._assistant_confirm_search_reset_from_main():
                 self._restore_main_parameter_snapshot()
@@ -12792,10 +12852,17 @@ class VmanApp(tk.Tk):
         self._schedule_auto_simulate()
         self._mark_template_dirty()
         self._schedule_workspace_autosave()
+
         if can_reset_assistant:
-            self._assistant_reset_from_main_window("Assistenten er nulstillet efter ændringer i Kontrolcenter.")
-        if not self._assistant_has_search_state():
+            self._assistant_reset_from_main_window(
+                "Assistenten er nulstillet efter ændringer i Spiller-sektionen."
+            )
+
+        # Only accepted Player edits advance the rollback baseline used if the
+        # user declines the warning. Programme edits must not redefine it.
+        if is_player_change and not self._assistant_has_search_state():
             self._store_main_parameter_snapshot()
+
         if getattr(self, "active_group", None):
             try:
                 self._store_active_group_program_snapshot()
@@ -12805,6 +12872,7 @@ class VmanApp(tk.Tk):
                 self._schedule_group_report_recompute(delay=300)
             except Exception:
                 pass
+
     def _schedule_auto_simulate(self):
         if self._auto_after_id is not None:
             try:
@@ -13471,7 +13539,7 @@ class VmanApp(tk.Tk):
             else:
                 tree.insert("", "end", iid=iid, values=values)
 
-        self._schedule_settings_changed()
+        self._schedule_settings_changed("program")
 
         valid_selection = [idx for idx in current_selection if idx < len(self.program)]
         if valid_selection:
@@ -14613,7 +14681,7 @@ class VmanApp(tk.Tk):
             if hasattr(self, "result_text"):
                 self.result_text.delete("1.0", "end")
                 self.result_text.insert("1.0", "\n".join(lines))
-            self._settings_changed()
+            self._settings_changed("program")
 
         except Exception as e:
             self._main_notice(str(e))
@@ -14659,7 +14727,7 @@ class VmanApp(tk.Tk):
                 self.active_position = position
 
                 self._refresh_program_tree()
-                self._settings_changed()
+                self._settings_changed("program")
             finally:
                 self._suppress_template_dirty = False
 
