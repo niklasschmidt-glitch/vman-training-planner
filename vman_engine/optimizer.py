@@ -407,6 +407,17 @@ def assistant_search_training_plans(
     reference_training_points = max(20, min(24, int(reference_training_points or 23)))
 
     for label, program in candidates:
+        program = _apply_rul_and_training_match_constraints(
+            position=position,
+            source_program=program,
+            total_days=days,
+            start_age=start_age,
+            weights=weights_norm,
+            allow_boost=allow_intensity_boost,
+            boost_uses=intensity_boost_uses,
+            boost_period=intensity_boost_period_days,
+            change_every_days=change_every_days,
+        )
         results.append(
             _evaluate_assistant_program(
                 label=label,
@@ -738,6 +749,26 @@ def _program_signature(program: List[TrainingInstruction]):
         else:
             signature.append((phase.days, phase.exercise, phase.training_points, tuple(sorted((phase.distribution or {}).items()))))
     return tuple(signature)
+
+
+def _normalise_roll_block_days(change_every_days: int, roll_block_days: int, maximum: int = 365) -> int:
+    """Normalisér Fast rul til et helt antal træningspas.
+
+    Tie-breaks går nedad, så en gammel 7-dages blok med 2- eller 3-dages
+    træningspas bliver 6 dage frem for at blive gjort længere.
+    """
+    change_every_days = max(1, min(int(change_every_days or 1), int(maximum)))
+    max_multiple = max(change_every_days, (int(maximum) // change_every_days) * change_every_days)
+    try:
+        roll_block_days = int(roll_block_days)
+    except Exception:
+        roll_block_days = change_every_days
+    roll_block_days = max(change_every_days, min(roll_block_days, max_multiple))
+    lower = max(change_every_days, (roll_block_days // change_every_days) * change_every_days)
+    upper = min(max_multiple, lower + change_every_days)
+    if abs(roll_block_days - lower) <= abs(upper - roll_block_days):
+        return lower
+    return upper
 
 
 def assistant_search_training_plans_timed(
@@ -1151,6 +1182,133 @@ def _exercise_from_daily_or_fallback(
     return fallback_exercise
 
 
+
+def _append_training_pass(
+    program: List[TrainingInstruction],
+    *,
+    days: int,
+    exercise: str,
+    distribution: Optional[Dict[str, int]],
+    training_points: int,
+    session_days: int,
+    full_pass: bool,
+) -> None:
+    """Tilføj et træningspas uden at skjule en kort slutrest i forrige pas.
+
+    Hele, ens træningspas må gerne samles til fx 6 eller 9 dage, når den valgte
+    paslængde er 3 dage. En kort rest på periodens sidste 1-2 dage skal derimod
+    stå som sit eget pas og må ikke blive slået sammen til fx 4 eller 7 dage.
+    """
+    days = max(1, int(days))
+    session_days = max(1, int(session_days))
+    instruction = TrainingInstruction(
+        days=days,
+        exercise=str(exercise),
+        distribution=None if distribution is None else dict(distribution),
+        training_points=max(20, min(24, int(training_points))),
+    )
+
+    if program and full_pass:
+        previous = program[-1]
+        if (
+            isinstance(previous, TrainingInstruction)
+            and int(previous.days) % session_days == 0
+            and previous.exercise == instruction.exercise
+            and int(previous.training_points) == int(instruction.training_points)
+            and previous.distribution == instruction.distribution
+        ):
+            program[-1] = TrainingInstruction(
+                days=int(previous.days) + days,
+                exercise=previous.exercise,
+                distribution=None if previous.distribution is None else dict(previous.distribution),
+                training_points=int(previous.training_points),
+            )
+            return
+
+    program.append(instruction)
+
+
+def _build_training_pass_program(
+    position: str,
+    source_daily: List[Tuple[str, int, Optional[Dict[str, int]]]],
+    total_days: int,
+    session_days: int,
+    weights: Dict[str, float],
+    allow_boost: bool,
+    boost_uses: int,
+    boost_period: int,
+    *,
+    global_start_day: int = 1,
+    fixed_exercise: Optional[str] = None,
+    fallback_exercise: str = "Træningskamp",
+    repeat_source_points: bool = False,
+) -> List[TrainingInstruction]:
+    """Byg programmet i reelle pas af den valgte længde.
+
+    Søgemetoderne arbejder internt med dagssekvenser. Tidligere kunne deres
+    mutationer derfor skabe 1-, 4- og andre vilkårlige pas, selv om brugeren
+    havde valgt fx 3 dage. Her samples øvelsen kun ved starten af hvert logiske
+    træningspas. Kun den uundgåelige rest helt til sidst må være kortere.
+
+    Intensitetsforøgelse lægges også på hele træningspasset, så den ikke splitter
+    et valgt 3-dages pas i 1+2 dage. Rytmens forhold bevares over passene.
+    """
+    position = normalize_position(position)
+    total_days = max(0, int(total_days))
+    session_days = max(1, int(session_days))
+    global_start_day = max(1, int(global_start_day))
+    if total_days <= 0:
+        return []
+
+    source_daily = list(source_daily or [])
+    program: List[TrainingInstruction] = []
+
+    for offset in range(0, total_days, session_days):
+        pass_days = min(session_days, total_days - offset)
+        source_index = offset
+        if source_daily:
+            source_exercise, source_points, _source_distribution = source_daily[source_index % len(source_daily)]
+        else:
+            source_exercise, source_points = fallback_exercise, 23
+
+        exercise = str(fixed_exercise if fixed_exercise is not None else source_exercise)
+        if repeat_source_points:
+            points = int(source_points)
+        else:
+            # Brug passets nummer i intensitetsrytmen i stedet for den enkelte
+            # dag. Derved bevares det valgte forhold uden at splitte passet.
+            pass_number = (global_start_day - 1) // session_days + (offset // session_days) + 1
+            points = 24 if _is_boost_day(pass_number, allow_boost, boost_uses, boost_period) else 23
+
+        distribution = _distribution_for_exercise(position, exercise, weights, points)
+        _append_training_pass(
+            program,
+            days=pass_days,
+            exercise=exercise,
+            distribution=distribution,
+            training_points=points,
+            session_days=session_days,
+            full_pass=(pass_days == session_days),
+        )
+
+    return program
+
+
+def _initial_training_match_days(
+    source_daily: List[Tuple[str, int, Optional[Dict[str, int]]]],
+    total_days: int,
+    session_days: int,
+) -> int:
+    """Bevar en reel TM-indledning, men ikke et tilfældigt enkelt TM-døgn."""
+    count = 0
+    for exercise, _points, _distribution in source_daily[:max(0, int(total_days))]:
+        if str(exercise) != "Træningskamp":
+            break
+        count += 1
+    if count >= max(1, int(session_days)) and count < max(1, int(total_days)):
+        return count
+    return 0
+
 def _apply_rul_and_training_match_constraints(
     position: str,
     source_program: List[TrainingInstruction],
@@ -1160,67 +1318,119 @@ def _apply_rul_and_training_match_constraints(
     allow_boost: bool,
     boost_uses: int,
     boost_period: int,
+    change_every_days: int = 1,
     roll_enabled: bool = False,
     roll_block_days: int = 7,
     training_match_prelude_enabled: bool = False,
     training_match_until_age: Optional[float] = None,
 ) -> List[TrainingInstruction]:
-    """Tving valgfri Træningskamp-indledning og/eller gentagende Rul-blok.
+    """Håndhæv paslængde, TM-indledning og Fast rul i én fælles slutkontrol.
 
-    Rul:
-    - Finder en basisblok på roll_block_days i suffixet.
-    - Gentager den som TrainingCycle.
-    - Eventuel rest lægges til som almindelige faser.
+    Alle søgemetoder kan internt arbejde på dagsniveau, men det færdige program
+    bygges altid i hele træningspas. Kun en reel rest ved periodens afslutning
+    eller ved en præcis TM-alder må være kortere end den valgte paslængde.
     """
     position = normalize_position(position)
     total_days = max(1, int(total_days))
-    prefix_days = _assistant_constraint_prefix_days(
+    session_days = max(1, int(change_every_days or 1))
+    source_daily = _program_to_daily(source_program)
+
+    explicit_prefix_days = _assistant_constraint_prefix_days(
         start_age,
         total_days,
         training_match_prelude_enabled,
         training_match_until_age,
     )
+
+    # TM17/18/19-kandidater kommer allerede med en indledende sekvens af
+    # Træningskamp. Bevar den nøjagtige aldersgrænse, men lad et tilfældigt
+    # enkelt Træningskamp-døgn indgå i den normale pasblok i stedet.
+    inferred_prefix_days = 0
+    if explicit_prefix_days <= 0:
+        inferred_prefix_days = _initial_training_match_days(source_daily, total_days, session_days)
+
+    prefix_days = explicit_prefix_days or inferred_prefix_days
+    prefix_days = max(0, min(total_days, int(prefix_days)))
     suffix_days = max(0, total_days - prefix_days)
 
     fallback_scores = _exercise_scores(position, weights)
     fallback_exercise = max(fallback_scores, key=fallback_scores.get) if fallback_scores else "Træningskamp"
-    source_daily = _program_to_daily(source_program)
+
+    if inferred_prefix_days > 0:
+        suffix_source_daily = source_daily[inferred_prefix_days:]
+    else:
+        # Ved en brugerbestemt TM-indledning skal det oprindelige søgeprogram
+        # begynde fra sin egen dag 1 efter indledningen.
+        suffix_source_daily = source_daily
 
     program: List[TrainingInstruction] = []
 
     if prefix_days > 0:
-        prefix_daily = [
-            _daily_tuple(position, "Træningskamp", weights, day, allow_boost, boost_uses, boost_period)
-            for day in range(1, prefix_days + 1)
-        ]
-        program.extend(_compress_daily_sequence(prefix_daily))
+        program.extend(
+            _build_training_pass_program(
+                position=position,
+                source_daily=[],
+                total_days=prefix_days,
+                session_days=session_days,
+                weights=weights,
+                allow_boost=allow_boost,
+                boost_uses=boost_uses,
+                boost_period=boost_period,
+                global_start_day=1,
+                fixed_exercise="Træningskamp",
+                fallback_exercise="Træningskamp",
+            )
+        )
 
     if suffix_days <= 0:
-        return program or _compress_daily_sequence([
-            _daily_tuple(position, "Træningskamp", weights, 1, allow_boost, boost_uses, boost_period)
-        ])
+        return program or _build_training_pass_program(
+            position=position,
+            source_daily=[],
+            total_days=total_days,
+            session_days=session_days,
+            weights=weights,
+            allow_boost=allow_boost,
+            boost_uses=boost_uses,
+            boost_period=boost_period,
+            global_start_day=1,
+            fixed_exercise="Træningskamp",
+            fallback_exercise="Træningskamp",
+        )
 
     if not roll_enabled:
-        suffix_daily = []
-        for offset in range(suffix_days):
-            day = prefix_days + offset + 1
-            exercise = _exercise_from_daily_or_fallback(source_daily, offset, fallback_exercise)
-            suffix_daily.append(_daily_tuple(position, exercise, weights, day, allow_boost, boost_uses, boost_period))
-        program.extend(_compress_daily_sequence(suffix_daily))
+        program.extend(
+            _build_training_pass_program(
+                position=position,
+                source_daily=suffix_source_daily,
+                total_days=suffix_days,
+                session_days=session_days,
+                weights=weights,
+                allow_boost=allow_boost,
+                boost_uses=boost_uses,
+                boost_period=boost_period,
+                global_start_day=prefix_days + 1,
+                fallback_exercise=fallback_exercise,
+            )
+        )
         return program
 
-    block_days = max(1, min(int(roll_block_days or 1), suffix_days))
-    block_daily = []
-    for offset in range(block_days):
-        day = prefix_days + offset + 1
-        exercise = _exercise_from_daily_or_fallback(source_daily, offset, fallback_exercise)
-        block_daily.append(_daily_tuple(position, exercise, weights, day, allow_boost, boost_uses, boost_period))
-
-    block_program = _compress_daily_sequence(block_daily)
+    block_days = _normalise_roll_block_days(session_days, roll_block_days)
     repetitions = suffix_days // block_days
     rest_days = suffix_days % block_days
 
     if repetitions > 0:
+        block_program = _build_training_pass_program(
+            position=position,
+            source_daily=suffix_source_daily,
+            total_days=block_days,
+            session_days=session_days,
+            weights=weights,
+            allow_boost=allow_boost,
+            boost_uses=boost_uses,
+            boost_period=boost_period,
+            global_start_day=prefix_days + 1,
+            fallback_exercise=fallback_exercise,
+        )
         program.append(
             TrainingCycle(
                 name=f"Rul {block_days} dage",
@@ -1228,16 +1438,43 @@ def _apply_rul_and_training_match_constraints(
                 repetitions=repetitions,
             )
         )
+    else:
+        block_program = _build_training_pass_program(
+            position=position,
+            source_daily=suffix_source_daily,
+            total_days=min(block_days, suffix_days),
+            session_days=session_days,
+            weights=weights,
+            allow_boost=allow_boost,
+            boost_uses=boost_uses,
+            boost_period=boost_period,
+            global_start_day=prefix_days + 1,
+            fallback_exercise=fallback_exercise,
+        )
 
     if rest_days:
-        rest_daily = []
-        for offset in range(rest_days):
-            exercise, points, distribution = block_daily[offset % len(block_daily)]
-            rest_daily.append((exercise, points, None if distribution is None else dict(distribution)))
-        program.extend(_compress_daily_sequence(rest_daily))
+        # Resten gentager begyndelsen af selve rulblokken og bevarer dermed
+        # både øvelse og intensitet. En sidste kort rest står separat.
+        rest_source_daily = _program_to_daily(block_program)
+        program.extend(
+            _build_training_pass_program(
+                position=position,
+                source_daily=rest_source_daily,
+                total_days=rest_days,
+                session_days=session_days,
+                weights=weights,
+                allow_boost=allow_boost,
+                boost_uses=boost_uses,
+                boost_period=boost_period,
+                global_start_day=prefix_days + repetitions * block_days + 1,
+                fallback_exercise=fallback_exercise,
+                repeat_source_points=True,
+            )
+        )
+    elif repetitions == 0:
+        program.extend(block_program)
 
     return program
-
 
 def assistant_search_training_plans_timed(
     position: str,
@@ -1293,7 +1530,7 @@ def assistant_search_training_plans_timed(
     boost_period = max(1, int(intensity_boost_period_days or 1))
     boost_uses = max(1, min(boost_period, int(intensity_boost_uses or 1)))
     roll_enabled = bool(roll_enabled)
-    roll_block_days = max(1, int(roll_block_days or 1))
+    roll_block_days = _normalise_roll_block_days(change_every_days, roll_block_days)
     training_match_prelude_enabled = bool(training_match_prelude_enabled)
     if training_match_until_age is not None:
         training_match_until_age = float(training_match_until_age)
@@ -1353,6 +1590,7 @@ def assistant_search_training_plans_timed(
             allow_boost=allow_intensity_boost,
             boost_uses=boost_uses,
             boost_period=boost_period,
+            change_every_days=change_every_days,
             roll_enabled=roll_enabled,
             roll_block_days=roll_block_days,
             training_match_prelude_enabled=training_match_prelude_enabled,
@@ -1537,6 +1775,7 @@ def assistant_search_training_plans_timed(
             allow_boost=allow_intensity_boost,
             boost_uses=boost_uses,
             boost_period=boost_period,
+            change_every_days=change_every_days,
             roll_enabled=roll_enabled,
             roll_block_days=roll_block_days,
             training_match_prelude_enabled=training_match_prelude_enabled,

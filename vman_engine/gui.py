@@ -246,8 +246,8 @@ UI_TEXT_DA_TO_EN = {
     "Indstillinger gemt.": "Settings saved.",
 
     # About
-    "Et uofficielt værktøj til at planlægge og simulere træning i Virtual Manager.\n\nUdviklet af Niklas Schmidt - FC Dronningemaen\nMed teknisk hjælp fra ChatGPT\n\nTak til alle der tester, finder fejl og kommer med idéer.\n\nVersion: 1.00\n\nVMAN Training Planner er ikke tilknyttet, godkendt af eller officielt forbundet med Virtual Manager.":
-    "An unofficial tool for planning and simulating training in Virtual Manager.\n\nDeveloped by Niklas Schmidt - FC Dronningemaen\nWith technical help from ChatGPT\n\nThanks to everyone who tests, finds bugs and shares ideas.\n\nVersion: 1.00\n\nVMAN Training Planner is not affiliated with, endorsed by or officially connected to Virtual Manager.",
+    "Et uofficielt værktøj til at planlægge og simulere træning i Virtual Manager.\n\nUdviklet af Niklas Schmidt - FC Dronningemaen\nMed teknisk hjælp fra ChatGPT\n\nTak til alle der tester, finder fejl og kommer med idéer.\n\nVersion: 1.01\n\nVMAN Training Planner er ikke tilknyttet, godkendt af eller officielt forbundet med Virtual Manager.":
+    "An unofficial tool for planning and simulating training in Virtual Manager.\n\nDeveloped by Niklas Schmidt - FC Dronningemaen\nWith technical help from ChatGPT\n\nThanks to everyone who tests, finds bugs and shares ideas.\n\nVersion: 1.01\n\nVMAN Training Planner is not affiliated with, endorsed by or officially connected to Virtual Manager.",
 }
 
 ADDITIONAL_UI_TEXT_DA_TO_EN = {
@@ -848,7 +848,7 @@ class VmanApp(tk.Tk):
         # Windows DPI fix: establish the same Tk text/widget scale as the
         # validated 100% layout before any styles or widgets are created.
         _stabilize_windows_tk_scaling(self)
-        self.title("VMAN Training Planner 1.00")
+        self.title("VMAN Training Planner 1.01")
         # Use the same application icon in Tk windows on both platforms.
         # The platform-specific .ico/.icns files are used by the build scripts.
         self._app_icon_photo = None
@@ -7211,7 +7211,7 @@ class VmanApp(tk.Tk):
             group_high_weighted_stats=bool(snapshot.get("group_high_weighted_stats", True)),
             penalty_tolerance=snapshot.get("penalty_tolerance", "Høj"),
             roll_enabled=bool(snapshot.get("roll_enabled", False)),
-            roll_block_days=int(snapshot.get("roll_block_days", 7)),
+            roll_block_days=int(snapshot.get("roll_block_days", 6)),
             training_match_prelude_enabled=bool(snapshot.get("training_match_prelude_enabled", False)),
             training_match_until_age=snapshot.get("training_match_until_age", None),
             top_n=10,
@@ -7978,7 +7978,7 @@ class VmanApp(tk.Tk):
             "Udviklet af Niklas Schmidt - FC Dronningemaen\n"
             "Med teknisk hjælp fra ChatGPT\n\n"
             "Tak til alle der tester, finder fejl og kommer med idéer.\n\n"
-            "Version: 1.00\n\n"
+            "Version: 1.01\n\n"
             "VMAN Training Planner er ikke tilknyttet, godkendt af eller officielt forbundet med Virtual Manager."
         )
 
@@ -9527,7 +9527,7 @@ class VmanApp(tk.Tk):
             "group_high_weighted_stats": True,
             "penalty_tolerance": "Høj",
             "roll_enabled": False,
-            "roll_block_days": 7,
+            "roll_block_days": 6,
             "training_match_prelude_enabled": False,
             "training_match_until_age": min(17.0, end_age),
             "search_method": "Beam Search",
@@ -9951,11 +9951,22 @@ class VmanApp(tk.Tk):
 
         if hasattr(self, "assistant_roll_enabled_var"):
             self.assistant_data["roll_enabled"] = bool(self.assistant_roll_enabled_var.get())
+
+        session_days = max(1, int(self.assistant_data.get("change_every_days", 1) or 1))
         if hasattr(self, "assistant_roll_block_days_var"):
             try:
-                self.assistant_data["roll_block_days"] = max(1, min(365, int(float(str(self.assistant_roll_block_days_var.get()).replace(",", ".")))))
+                requested_block_days = int(float(str(self.assistant_roll_block_days_var.get()).replace(",", ".")))
             except Exception:
-                self.assistant_data["roll_block_days"] = int(self.assistant_data.get("roll_block_days", 7) or 21)
+                requested_block_days = int(self.assistant_data.get("roll_block_days", session_days) or session_days)
+        else:
+            requested_block_days = int(self.assistant_data.get("roll_block_days", session_days) or session_days)
+
+        self.assistant_data["roll_block_days"] = self._assistant_nearest_roll_block_days(
+            requested_block_days,
+            session_days,
+        )
+        if hasattr(self, "assistant_roll_block_days_var"):
+            self._assistant_sync_roll_block_length()
 
         if hasattr(self, "assistant_tm_prelude_enabled_var"):
             self.assistant_data["training_match_prelude_enabled"] = bool(self.assistant_tm_prelude_enabled_var.get())
@@ -10585,9 +10596,19 @@ class VmanApp(tk.Tk):
             to=365,
             textvariable=self.assistant_change_every_days_var,
             width=6,
+            command=self._assistant_sync_roll_block_length,
         )
         self._configure_numeric_widget(self.assistant_change_every_days_spinbox, integer=True, max_value=365)
         self.assistant_change_every_days_spinbox.pack(side="left")
+        self.assistant_change_every_days_spinbox.bind(
+            "<FocusOut>", lambda _event: self._assistant_sync_roll_block_length()
+        )
+        self.assistant_change_every_days_spinbox.bind(
+            "<Return>", lambda _event: self._assistant_sync_roll_block_length()
+        )
+        self.assistant_change_every_days_var.trace_add(
+            "write", lambda *_: self._assistant_sync_roll_block_length()
+        )
         ttk.Label(training_pass_length_frame, text="dage").pack(side="left", padx=(4, 0))
 
         self.assistant_allow_intensity_var = tk.BooleanVar(value=bool(self.assistant_data.get("allow_intensity_boost", False)))
@@ -10650,17 +10671,31 @@ class VmanApp(tk.Tk):
         self.assistant_roll_frame = ttk.Frame(constraints)
         self.assistant_roll_frame.grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
         ttk.Label(self.assistant_roll_frame, text="bloklængde").pack(side="left")
-        self.assistant_roll_block_days_var = tk.StringVar(value=str(self.assistant_data.get("roll_block_days", 7)))
+        self.assistant_roll_block_days_var = tk.StringVar(value=str(self.assistant_data.get("roll_block_days", 6)))
         self.assistant_roll_block_days_spinbox = tk.Spinbox(
             self.assistant_roll_frame,
             from_=1,
             to=365,
+            increment=1,
             textvariable=self.assistant_roll_block_days_var,
             width=5,
+            command=self._assistant_sync_roll_block_length,
         )
         self.assistant_roll_block_days_spinbox.pack(side="left", padx=(6, 4))
         self._configure_numeric_widget(self.assistant_roll_block_days_spinbox, integer=True, max_value=365)
+        self.assistant_roll_block_days_spinbox.bind(
+            "<FocusOut>", lambda _event: self._assistant_sync_roll_block_length()
+        )
+        self.assistant_roll_block_days_spinbox.bind(
+            "<Return>", lambda _event: self._assistant_sync_roll_block_length()
+        )
         ttk.Label(self.assistant_roll_frame, text="dage").pack(side="left")
+        self.assistant_roll_pass_count_var = tk.StringVar(value="")
+        ttk.Label(
+            self.assistant_roll_frame,
+            textvariable=self.assistant_roll_pass_count_var,
+        ).pack(side="left", padx=(6, 0))
+        self._assistant_sync_roll_block_length()
 
         self.assistant_tm_prelude_enabled_var = tk.BooleanVar(value=bool(self.assistant_data.get("training_match_prelude_enabled", False)))
         ttk.Checkbutton(
@@ -10797,7 +10832,79 @@ class VmanApp(tk.Tk):
         self._assistant_reset_weights()
 
 
+    @staticmethod
+    def _assistant_nearest_roll_block_days(block_days, session_days, maximum=365):
+        """Returnér nærmeste gyldige bloklængde i hele træningspas."""
+        try:
+            session_days = max(1, min(int(session_days), int(maximum)))
+        except Exception:
+            session_days = 1
+        try:
+            block_days = int(block_days)
+        except Exception:
+            block_days = session_days
+
+        max_multiple = max(session_days, (int(maximum) // session_days) * session_days)
+        block_days = max(session_days, min(block_days, max_multiple))
+        lower = max(session_days, (block_days // session_days) * session_days)
+        upper = min(max_multiple, lower + session_days)
+        if abs(block_days - lower) <= abs(upper - block_days):
+            return lower
+        return upper
+
+    def _assistant_sync_roll_block_length(self, *_):
+        """Hold Fast rul-bloklængden kongruent med længden på træningspasset."""
+        if getattr(self, "_assistant_roll_length_sync_lock", False):
+            return
+        if not hasattr(self, "assistant_change_every_days_var"):
+            return
+
+        try:
+            session_days = max(
+                1,
+                min(365, int(float(str(self.assistant_change_every_days_var.get()).replace(",", ".")))),
+            )
+        except Exception:
+            return
+
+        fallback = int(self.assistant_data.get("roll_block_days", session_days) or session_days)
+        if hasattr(self, "assistant_roll_block_days_var"):
+            try:
+                block_days = int(float(str(self.assistant_roll_block_days_var.get()).replace(",", ".")))
+            except Exception:
+                block_days = fallback
+        else:
+            block_days = fallback
+
+        block_days = self._assistant_nearest_roll_block_days(block_days, session_days)
+        max_multiple = max(session_days, (365 // session_days) * session_days)
+
+        self._assistant_roll_length_sync_lock = True
+        try:
+            if hasattr(self, "assistant_change_every_days_var"):
+                if str(self.assistant_change_every_days_var.get()) != str(session_days):
+                    self.assistant_change_every_days_var.set(str(session_days))
+            if hasattr(self, "assistant_roll_block_days_spinbox"):
+                self.assistant_roll_block_days_spinbox.config(
+                    from_=session_days,
+                    to=max_multiple,
+                    increment=session_days,
+                )
+            if hasattr(self, "assistant_roll_block_days_var"):
+                if str(self.assistant_roll_block_days_var.get()) != str(block_days):
+                    self.assistant_roll_block_days_var.set(str(block_days))
+            if hasattr(self, "assistant_roll_pass_count_var"):
+                pass_count = max(1, block_days // session_days)
+                if self._language_code() == "en":
+                    unit = "session" if pass_count == 1 else "sessions"
+                else:
+                    unit = "træningspas"
+                self.assistant_roll_pass_count_var.set(f"({pass_count} {unit})")
+        finally:
+            self._assistant_roll_length_sync_lock = False
+
     def _assistant_toggle_roll_controls(self):
+        self._assistant_sync_roll_block_length()
         enabled = bool(self.assistant_roll_enabled_var.get()) if hasattr(self, "assistant_roll_enabled_var") else False
         state = "normal" if enabled else "disabled"
         if hasattr(self, "assistant_roll_block_days_spinbox"):
@@ -12230,7 +12337,7 @@ class VmanApp(tk.Tk):
                         group_high_weighted_stats=bool(snapshot.get("group_high_weighted_stats", True)),
                         penalty_tolerance=snapshot.get("penalty_tolerance", "Høj"),
                         roll_enabled=bool(snapshot.get("roll_enabled", False)),
-                        roll_block_days=int(snapshot.get("roll_block_days", 7)),
+                        roll_block_days=int(snapshot.get("roll_block_days", 6)),
                         training_match_prelude_enabled=bool(snapshot.get("training_match_prelude_enabled", False)),
                         training_match_until_age=snapshot.get("training_match_until_age", None),
                         top_n=10,

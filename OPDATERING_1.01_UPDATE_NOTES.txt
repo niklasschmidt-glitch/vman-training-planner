@@ -1,0 +1,36 @@
+VMAN TRAINING PLANNER 1.01 – OPDATERING
+
+Version 1.01 er nu klar til både Windows og macOS.
+
+Opdateringen indeholder følgende rettelser og forbedringer:
+
+- Længden på træningspas håndhæves nu korrekt i alle søgemetoder. Vælges eksempelvis 3 dages træningspas, opbygges træningsprogrammet som udgangspunkt af sessioner på 3, 6, 9, 12 dage osv. En kortere session kan kun forekomme som en nødvendig rest ved træningsperiodens afslutning eller ved en præcis aldersgrænse for Træningskamp.
+- Fast rul og længden på træningspas hænger nu sammen. Bloklængden kan kun vælges i intervaller, der består af hele træningspas. Ved 3 dages træningspas kan der eksempelvis vælges 3, 6, 9, 12 dage osv.
+- Queen Seeker understøtter nu Fast rul, så søgningen ikke længere stopper med en fejl ved cyklusbaserede træningsprogrammer.
+- Ved skift mellem importerede grupper overføres den nye gruppes data automatisk til Assistenten, så en ny søgning kan startes uden manuel genindtastning.
+- Importen af keeper-egenskaben Spring er rettet. Egenskaben kunne tidligere blive stående på 2, når VMAN benyttede betegnelsen Diving.
+- Avatarrotationen i Assistenten fungerer nu korrekt.
+- Import af et søgeresultat fra Assistenten til Kontrolcenteret udløser ikke længere en fejlagtig advarsel om, at søgningen ryddes. Advarslen gælder nu kun ved ændringer i Spiller-sektionen.
+- Et layoutproblem på macOS efter fjernelse af en gruppe i Gruppeimport er rettet.
+
+Version 1.01 erstatter version 1.00.
+
+
+------------------------------------------------------------
+
+VMAN TRAINING PLANNER 1.01 – UPDATE
+
+Version 1.01 is now available for both Windows and macOS.
+
+The update includes the following fixes and improvements:
+
+- Training session length is now enforced correctly across all search methods. For example, when a 3-day training session length is selected, the training programme is generally built from sessions lasting 3, 6, 9, 12 days, and so on. A shorter session can only occur as a necessary remainder at the end of the training period or at an exact age limit for Training match.
+- Fixed rotation and training session length are now linked. The block length can only be selected in intervals made up of complete training sessions. With 3-day training sessions, for example, the available block lengths are 3, 6, 9, 12 days, and so on.
+- Queen Seeker now supports Fixed rotation, so searches no longer stop with an error when using cycle-based training programmes.
+- When switching between imported groups, the newly selected group’s data is transferred automatically to the Assistant, allowing a new search to begin without manually entering all data again.
+- The import of the goalkeeper attribute Jumping (Spring) has been fixed. The attribute could previously remain at 2 when VMAN used the label Diving.
+- Avatar rotation in the Assistant now works correctly.
+- Importing a search result from the Assistant into the Control Center no longer triggers an incorrect warning that the search will be cleared. The warning now applies only when data in the Player section is changed.
+- A macOS layout problem that could occur after removing a group in Group Import has been fixed.
+
+Version 1.01 replaces version 1.00.
