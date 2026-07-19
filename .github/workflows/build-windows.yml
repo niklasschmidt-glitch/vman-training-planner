@@ -30,7 +30,7 @@ jobs:
             --clean `
             --windowed `
             --noupx `
-            --name "VMAN Training Planner 1.00" `
+            --name "VMAN Training Planner 1.02" `
             --icon "vman_engine\assets\vman_training_planner.ico" `
             --add-data "vman_engine\assets;vman_engine\assets" `
             --add-data "vman_engine\manuals;vman_engine\manuals" `
@@ -39,16 +39,16 @@ jobs:
 
           Copy-Item `
             "README_FOR_USERS.txt" `
-            "dist\VMAN Training Planner 1.00\README.txt"
+            "dist\VMAN Training Planner 1.02\README.txt"
 
           Compress-Archive `
-            -Path "dist\VMAN Training Planner 1.00" `
-            -DestinationPath "VMAN_Training_Planner_1.00_Windows.zip" `
+            -Path "dist\VMAN Training Planner 1.02" `
+            -DestinationPath "VMAN_Training_Planner_1.02_Windows.zip" `
             -Force
 
       - name: Gem Windows-versionen
         uses: actions/upload-artifact@v4
         with:
-          name: VMAN_Training_Planner_1.00_Windows
-          path: VMAN_Training_Planner_1.00_Windows.zip
+          name: VMAN_Training_Planner_1.02_Windows
+          path: VMAN_Training_Planner_1.02_Windows.zip
           if-no-files-found: error
