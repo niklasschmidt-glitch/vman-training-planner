@@ -15,11 +15,19 @@ import sys
 import tempfile
 import webbrowser
 import re
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit, unquote
 import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import ttk, messagebox, filedialog, simpledialog
+
+try:
+    from tkinterdnd2 import DND_TEXT as _DND_TEXT, DND_FILES as _DND_FILES, TkinterDnD as _TkinterDnD
+    _VMAN_TK_BASE = _TkinterDnD.Tk
+except Exception:
+    _DND_TEXT = None
+    _DND_FILES = None
+    _VMAN_TK_BASE = tk.Tk
 
 from .config import POSITION_STATS, POSITION_WEIGHTS
 from .models import TrainingInstruction, TrainingCycle, PlayerState
@@ -30,9 +38,9 @@ from .optimizer import AssistantPlanResult, assistant_search_training_plans, ass
 from .player_fetcher import (
     fetch_player_snapshot, build_player_debug_bundle,
     engine_position_from_code, position_value_candidates,
+    vman_player_slug, build_vman_player_url,
 )
 import traceback
-import unicodedata
 
 
 def _enable_windows_dpi_awareness():
@@ -246,8 +254,8 @@ UI_TEXT_DA_TO_EN = {
     "Indstillinger gemt.": "Settings saved.",
 
     # About
-    "Et uofficielt værktøj til at planlægge og simulere træning i Virtual Manager.\n\nUdviklet af Niklas Schmidt - FC Dronningemaen\nMed teknisk hjælp fra ChatGPT\n\nTak til alle der tester, finder fejl og kommer med idéer.\n\nVersion: 1.01\n\nVMAN Training Planner er ikke tilknyttet, godkendt af eller officielt forbundet med Virtual Manager.":
-    "An unofficial tool for planning and simulating training in Virtual Manager.\n\nDeveloped by Niklas Schmidt - FC Dronningemaen\nWith technical help from ChatGPT\n\nThanks to everyone who tests, finds bugs and shares ideas.\n\nVersion: 1.01\n\nVMAN Training Planner is not affiliated with, endorsed by or officially connected to Virtual Manager.",
+    "Et uofficielt værktøj til at planlægge og simulere træning i Virtual Manager.\n\nUdviklet af Niklas Schmidt - FC Dronningemaen\nMed teknisk hjælp fra ChatGPT\n\nTak til alle der tester, finder fejl og kommer med idéer.\n\nVersion: 1.02\n\nVMAN Training Planner er ikke tilknyttet, godkendt af eller officielt forbundet med Virtual Manager.":
+    "An unofficial tool for planning and simulating training in Virtual Manager.\n\nDeveloped by Niklas Schmidt - FC Dronningemaen\nWith technical help from ChatGPT\n\nThanks to everyone who tests, finds bugs and shares ideas.\n\nVersion: 1.02\n\nVMAN Training Planner is not affiliated with, endorsed by or officially connected to Virtual Manager.",
 }
 
 ADDITIONAL_UI_TEXT_DA_TO_EN = {
@@ -842,13 +850,13 @@ def internal_penalty_tolerance(value):
     return PENALTY_TOLERANCE_EN_TO_DA.get(str(value), str(value))
 
 
-class VmanApp(tk.Tk):
+class VmanApp(_VMAN_TK_BASE):
     def __init__(self):
         super().__init__()
         # Windows DPI fix: establish the same Tk text/widget scale as the
         # validated 100% layout before any styles or widgets are created.
         _stabilize_windows_tk_scaling(self)
-        self.title("VMAN Training Planner 1.01")
+        self.title("VMAN Training Planner 1.02")
         # Use the same application icon in Tk windows on both platforms.
         # The platform-specific .ico/.icns files are used by the build scripts.
         self._app_icon_photo = None
@@ -1859,6 +1867,73 @@ class VmanApp(tk.Tk):
             return getattr(self, "_player_link_raw_value", "") or ""
         self._player_link_raw_value = current
         return current
+
+    def _configure_player_link_drop_target(self):
+        """Allow browser/player links to be dropped directly into the field."""
+        entry = getattr(self, "player_ref_entry", None)
+        if entry is None or _DND_TEXT is None or not hasattr(entry, "drop_target_register"):
+            return
+        try:
+            dnd_types = [_DND_TEXT]
+            if _DND_FILES is not None:
+                dnd_types.append(_DND_FILES)
+            entry.drop_target_register(*dnd_types)
+            entry.dnd_bind("<<Drop>>", self._on_player_link_drop)
+        except Exception:
+            # Drag/drop is an enhancement and must never block normal startup.
+            pass
+
+    def _player_reference_from_drop_data(self, data):
+        raw = unquote(str(data or "").strip())
+        if not raw:
+            return ""
+
+        parts = []
+        try:
+            parts.extend(self.tk.splitlist(raw))
+        except Exception:
+            parts.append(raw)
+        if raw not in parts:
+            parts.append(raw)
+
+        player_url_re = re.compile(
+            r"https?://(?:www\.)?virtualmanager\.com/(?:[a-z]{2}/)?players/\d+(?:-[^\s<>\"'{}]+)?",
+            flags=re.IGNORECASE,
+        )
+        for part in parts:
+            cleaned = str(part or "").strip().strip("{}\"'")
+            match = player_url_re.search(cleaned)
+            if match:
+                return match.group(0).rstrip(".,;)")
+
+        # Also accept a raw player id when dragged from a text source.
+        for part in parts:
+            cleaned = str(part or "").strip().strip("{}\"'")
+            if re.fullmatch(r"\d+", cleaned):
+                return cleaned
+        return ""
+
+    def _on_player_link_drop(self, event):
+        reference = self._player_reference_from_drop_data(getattr(event, "data", ""))
+        if not reference:
+            self._main_notice(
+                "The dropped content does not contain a valid VMAN player link."
+                if self._language_code() == "en"
+                else "Det, du slap, indeholder ikke et gyldigt VMAN-spillerlink."
+            )
+            return getattr(event, "action", "copy")
+
+        self._player_link_raw_value = reference
+        self._player_link_display_value = ""
+        self._player_link_display_mode = "raw"
+        self.player_link_var.set(reference)
+        try:
+            self.player_ref_entry.focus_set()
+            self.player_ref_entry.icursor("end")
+            self.player_ref_entry.selection_clear()
+        except Exception:
+            pass
+        return getattr(event, "action", "copy")
 
     def _main_notice(self, text):
         """Vis Kontrolcenter-beskeder uden ekstra statuslinje."""
@@ -2926,6 +3001,30 @@ class VmanApp(tk.Tk):
             except Exception:
                 return None
 
+        def actual_player_link(item, player_id):
+            link_values = []
+            for key in (
+                "url", "href", "link", "profile_url", "profileUrl",
+                "player_url", "playerUrl", "profile_link", "profileLink",
+            ):
+                if key in item:
+                    link_values.append(item.get(key))
+            for nested_key in ("links", "profile", "player"):
+                nested = item.get(nested_key)
+                if isinstance(nested, dict):
+                    for key in ("url", "href", "link", "profile_url", "profileUrl"):
+                        if key in nested:
+                            link_values.append(nested.get(key))
+
+            pattern = re.compile(rf"/(?:[a-z]{{2}}/)?players/{re.escape(str(player_id))}(?:[-/?#]|$)", re.IGNORECASE)
+            for value in link_values:
+                if isinstance(value, dict):
+                    value = value.get("url") or value.get("href") or value.get("link")
+                candidate = str(value or "").strip()
+                if candidate and pattern.search(candidate):
+                    return urljoin(base_url or "https://www.virtualmanager.com/", candidate)
+            return ""
+
         try:
             raw = str(html or "").replace(r"\/", "/")
             decoder = json.JSONDecoder()
@@ -2981,12 +3080,9 @@ class VmanApp(tk.Tk):
                     if rating is None:
                         rating = listed_rating
                     name = str(item.get("name") or f"Player {pid}")
-                    try:
-                        slug = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
-                        slug = re.sub(r"[^a-zA-Z0-9]+", "-", slug.lower()).strip("-")
-                    except Exception:
-                        slug = ""
-                    suffix = f"{pid}-{slug}" if slug else pid
+                    player_url = actual_player_link(item, pid)
+                    if not player_url:
+                        player_url = build_vman_player_url(pid, name, language="da")
                     out.append({
                         "name": name,
                         "age": as_float(item.get("age")),
@@ -2995,7 +3091,7 @@ class VmanApp(tk.Tk):
                         "rating": rating,
                         "xp": None,
                         "stats": stats,
-                        "url": urljoin(base_url or "https://www.virtualmanager.com/", f"/da/players/{suffix}"),
+                        "url": player_url,
                         "source": "club_players_data",
                         "assigned_group": "",
                         "avatar_url": None,
@@ -3006,7 +3102,7 @@ class VmanApp(tk.Tk):
             pass
         return out
 
-    def _fetch_group_player_xp_only(self, url):
+    def _fetch_group_player_xp_only(self, url, player_name=None):
         """Fetch only the training-XP average for group import.
 
         Club imports only know the player id + generated slug. VMAN sometimes
@@ -3038,7 +3134,7 @@ class VmanApp(tk.Tk):
 
             # 1) Fast path: direct /training candidates from the known URL.
             try:
-                _training_url, training_html = fetch_training_html_from_reference(url, session)
+                _training_url, training_html = fetch_training_html_from_reference(url, session, player_name=player_name)
                 value = parse_average(training_html)
                 if value is not None:
                     return value
@@ -3048,7 +3144,7 @@ class VmanApp(tk.Tk):
             # 2) Resolve profile URL first, then use the final/canonical URL for training.
             profile_candidates = []
             try:
-                profile_candidates.extend(player_url_candidates(url))
+                profile_candidates.extend(player_url_candidates(url, player_name=player_name))
             except Exception:
                 profile_candidates.append(str(url or ""))
             seen = set()
@@ -3069,7 +3165,7 @@ class VmanApp(tk.Tk):
                             candidates.append(urljoin(profile_url, match.group(1)))
                     for resolved in candidates:
                         try:
-                            _training_url, training_html = fetch_training_html_from_reference(resolved, session)
+                            _training_url, training_html = fetch_training_html_from_reference(resolved, session, player_name=player_name)
                             value = parse_average(training_html)
                             if value is not None:
                                 return value
@@ -3105,8 +3201,9 @@ class VmanApp(tk.Tk):
         authoritative_group_position = internal_position(
             (player or {}).get("engine_position", "Forsvar")
         )
+        player_name = str((player or {}).get("name", "") or "").strip() or None
         try:
-            snap = fetch_player_snapshot(url)
+            snap = fetch_player_snapshot(url, player_name=player_name)
             try:
                 name = str(getattr(snap, "navn", "") or "").strip()
                 if name and name != "Ukendt":
@@ -3196,7 +3293,7 @@ class VmanApp(tk.Tk):
         # Fallback: keep the old XP-only path, so this change cannot make
         # group import less useful if VMAN blocks a profile page.
         try:
-            xp = self._fetch_group_player_xp_only(url)
+            xp = self._fetch_group_player_xp_only(url, player_name=player_name)
             if xp is not None:
                 updates["xp"] = float(xp)
         except Exception:
@@ -3266,7 +3363,7 @@ class VmanApp(tk.Tk):
             key = self._group_player_key(player)
             candidates = []
             try:
-                candidates.extend(player_url_candidates(url or key))
+                candidates.extend(player_url_candidates(url or key, player_name=(player or {}).get("name")))
             except Exception:
                 if url:
                     candidates.append(url)
@@ -6774,6 +6871,7 @@ class VmanApp(tk.Tk):
         self.player_ref_entry.bind("<FocusIn>", self._activate_player_link_entry)
         self.player_ref_entry.bind("<Double-Button-1>", self._open_group_import_window)
         self.player_ref_entry.bind("<FocusOut>", lambda event: self._show_player_link_display())
+        self._configure_player_link_drop_target()
         ttk.Label(player_fields_frame, text="Importer:").grid(row=1, column=0, sticky="w", padx=label_padx, pady=(0, 7))
         player_button_frame = ttk.Frame(player_fields_frame)
         player_button_frame.grid(row=1, column=1, sticky="w", padx=(4, 0), pady=(0, 7))
@@ -7978,7 +8076,7 @@ class VmanApp(tk.Tk):
             "Udviklet af Niklas Schmidt - FC Dronningemaen\n"
             "Med teknisk hjælp fra ChatGPT\n\n"
             "Tak til alle der tester, finder fejl og kommer med idéer.\n\n"
-            "Version: 1.01\n\n"
+            "Version: 1.02\n\n"
             "VMAN Training Planner er ikke tilknyttet, godkendt af eller officielt forbundet med Virtual Manager."
         )
 
@@ -14602,6 +14700,9 @@ class VmanApp(tk.Tk):
                 if self.drag_is_dragging:
                     self._select_program_drag_range(event)
                 return "break"
+            if self.drag_mode == "move" and not self.drag_is_dragging and self.drag_source_index is not None:
+                self._select_indices([self.drag_source_index])
+                return "break"
             if self.drag_is_dragging and self.drag_source_selection:
                 drop_index = self._drop_index_from_event(event)
                 moved = self._move_program_items_to_index(self.drag_source_selection, drop_index)
@@ -15129,22 +15230,19 @@ class VmanApp(tk.Tk):
                 )
 
             try:
-                import matplotlib.pyplot as plt
+                from matplotlib.figure import Figure
+                from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
             except Exception:
                 self._main_notice(
-                    "Graph requires matplotlib. Install it with: pip install matplotlib"
+                    "Graph support could not be loaded. Reinstall the application."
                     if lang == "en"
-                    else "Graf kræver matplotlib. Installer det fx med: pip install matplotlib"
+                    else "Grafmodulet kunne ikke indlæses. Geninstaller programmet."
                 )
                 return
 
             position = internal_position(self.position_var.get())
             stats = POSITION_STATS[position]
-
-            ages = []
-            ratings = []
-            averages = []
-            days = []
+            ages, ratings, averages, days = [], [], [], []
 
             for result in self.last_history:
                 if result.rating is None:
@@ -15167,11 +15265,7 @@ class VmanApp(tk.Tk):
                 for result in history_without_penalty
                 if result.rating is not None
             }
-
-            averages_without_penalty = [
-                no_penalty_average_by_day.get(day)
-                for day in days
-            ]
+            averages_without_penalty = [no_penalty_average_by_day.get(day) for day in days]
 
             if lang == "en":
                 rating_label = "Rating"
@@ -15188,19 +15282,59 @@ class VmanApp(tk.Tk):
                 level_label = "Niveau"
                 title = f"Udvikling — {self._display_position(position)}"
 
-            plt.figure()
-            plt.plot(ages, ratings, label=rating_label)
-            plt.plot(ages, averages, label=average_label)
+            old_window = getattr(self, "_rating_graph_window", None)
+            try:
+                if old_window is not None and old_window.winfo_exists():
+                    old_window.destroy()
+            except Exception:
+                pass
 
+            win = tk.Toplevel(self)
+            self._rating_graph_window = win
+            win.title(title)
+            win.geometry("900x620")
+            win.minsize(640, 430)
+            try:
+                win.transient(self)
+            except Exception:
+                pass
+            try:
+                if getattr(self, "_app_icon_photo", None) is not None:
+                    win.iconphoto(True, self._app_icon_photo)
+            except Exception:
+                pass
+
+            def close_graph():
+                try:
+                    win.destroy()
+                finally:
+                    if getattr(self, "_rating_graph_window", None) is win:
+                        self._rating_graph_window = None
+
+            win.protocol("WM_DELETE_WINDOW", close_graph)
+
+            figure = Figure(figsize=(8.7, 5.4), dpi=100)
+            axis = figure.add_subplot(111)
+            axis.plot(ages, ratings, label=rating_label)
+            axis.plot(ages, averages, label=average_label)
             if averages_without_penalty and all(value is not None for value in averages_without_penalty):
-                plt.plot(ages, averages_without_penalty, label=average_no_penalty_label)
+                axis.plot(ages, averages_without_penalty, label=average_no_penalty_label)
+            axis.set_xlabel(age_label)
+            axis.set_ylabel(level_label)
+            axis.set_title(title)
+            axis.grid(True)
+            axis.legend()
+            figure.tight_layout()
 
-            plt.xlabel(age_label)
-            plt.ylabel(level_label)
-            plt.title(title)
-            plt.grid(True)
-            plt.legend()
-            plt.show()
+            canvas = FigureCanvasTkAgg(figure, master=win)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+            toolbar = NavigationToolbar2Tk(canvas, win, pack_toolbar=False)
+            toolbar.update()
+            toolbar.pack(fill="x", side="bottom")
+
+            win.lift()
+            canvas.get_tk_widget().focus_set()
 
         except Exception as e:
             self._main_notice(str(e))

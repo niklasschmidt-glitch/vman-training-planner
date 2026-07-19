@@ -1,11 +1,11 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title VMAN Training Planner 1.01 - Windows build
+title VMAN Training Planner 1.02 - Windows build
 
 echo.
 echo ===============================================
-echo   VMAN Training Planner 1.01 - Windows build
+echo   VMAN Training Planner 1.02 - Windows build
 echo ===============================================
 echo.
 
@@ -20,23 +20,25 @@ if errorlevel 1 goto FAILED
 echo.
 echo [2/3] Bygger programmet...
 py -3 -m PyInstaller --noconfirm --clean --windowed --noupx ^
-  --name "VMAN Training Planner 1.01" ^
+  --name "VMAN Training Planner 1.02" ^
   --icon "vman_engine\assets\vman_training_planner.ico" ^
+  --hidden-import "matplotlib.backends.backend_tkagg" ^
+  --collect-all "tkinterdnd2" ^
   --add-data "vman_engine\assets;vman_engine\assets" ^
   --add-data "vman_engine\manuals;vman_engine\manuals" ^
   --add-data "presets;presets" ^
   run_app.py
 if errorlevel 1 goto FAILED
 
-if not exist "dist\VMAN Training Planner 1.01\VMAN Training Planner 1.01.exe" goto FAILED
+if not exist "dist\VMAN Training Planner 1.02\VMAN Training Planner 1.02.exe" goto FAILED
 
-copy /Y "README_FOR_USERS.txt" "dist\VMAN Training Planner 1.01\README.txt" >nul
-copy /Y "OPDATERING_1.01_UPDATE_NOTES.txt" "dist\VMAN Training Planner 1.01\OPDATERING_1.01_UPDATE_NOTES.txt" >nul
+copy /Y "README_FOR_USERS.txt" "dist\VMAN Training Planner 1.02\README.txt" >nul
+copy /Y "OPDATERING_1.02_UPDATE_NOTES.txt" "dist\VMAN Training Planner 1.02\OPDATERING_1.02_UPDATE_NOTES.txt" >nul
 
 echo.
 echo [3/3] Pakker den faerdige udgave som zip...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "Compress-Archive -Path 'dist\VMAN Training Planner 1.01' -DestinationPath 'VMAN_Training_Planner_1.01_Windows.zip' -Force"
+  "Compress-Archive -Path 'dist\VMAN Training Planner 1.02' -DestinationPath 'VMAN_Training_Planner_1.02_Windows.zip' -Force"
 if errorlevel 1 goto FAILED
 
 echo.
@@ -45,12 +47,12 @@ echo   FAERDIG
 echo ===============================================
 echo.
 echo Programmet ligger her:
-echo dist\VMAN Training Planner 1.01\VMAN Training Planner 1.01.exe
+echo dist\VMAN Training Planner 1.02\VMAN Training Planner 1.02.exe
 echo.
 echo Filen til GitHub Releases ligger her:
-echo VMAN_Training_Planner_1.01_Windows.zip
+echo VMAN_Training_Planner_1.02_Windows.zip
 echo.
-start "" "dist\VMAN Training Planner 1.01"
+start "" "dist\VMAN Training Planner 1.02"
 pause
 exit /b 0
 

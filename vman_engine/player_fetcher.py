@@ -71,69 +71,81 @@ def _clean_player_url(reference: str) -> str:
     return urlunsplit((parts.scheme or "https", parts.netloc, path, "", ""))
 
 
-def player_url_candidates(reference: str) -> list[str]:
-    """Returnér robuste kandidat-URL'er uden at smide slug/language væk.
+def vman_player_slug(name: str) -> str:
+    """Create the slug VMAN uses in player profile URLs.
 
-    Fulde links prøves først, så fx /da/players/<id>-slug ikke reduceres til
-    /players/<id>, hvilket kan give 404.
+    VMAN removes non-ASCII characters completely instead of transliterating
+    them. Examples: Millán -> milln, Militão -> milito, Darío -> daro,
+    Bård -> brd.
+    """
+    slug = str(name or "").lower().strip()
+    slug = re.sub(r"[\s_/]+", "-", slug)
+    slug = re.sub(r"[^a-z0-9-]", "", slug)
+    return re.sub(r"-+", "-", slug).strip("-")
+
+
+def build_vman_player_url(player_id: int | str, player_name: str, language: str | None = None) -> str:
+    player_id = str(player_id).strip()
+    slug = vman_player_slug(player_name)
+    suffix = f"{player_id}-{slug}" if slug else player_id
+    prefix = f"/{language.strip('/')}" if language else ""
+    return f"https://www.virtualmanager.com{prefix}/players/{suffix}"
+
+
+def player_url_candidates(reference: str, player_name: str | None = None) -> list[str]:
+    """Return robust player profile candidates in priority order.
+
+    1. Use the actual VMAN link supplied by the page/user.
+    2. Try a reconstructed link using VMAN's special slug rule when a name is
+       available.
+    3. Fall back to id-only profile links.
     """
     raw = str(reference or "").strip()
     player_id = extract_player_id(raw)
-
-    if re.fullmatch(r"\d+", raw):
-        return [
-            f"https://www.virtualmanager.com/da/players/{player_id}",
-            f"https://www.virtualmanager.com/players/{player_id}",
-        ]
-
-    cleaned = _clean_player_url(raw)
-    candidates = [cleaned]
-
-    if re.search(rf"/players/{player_id}/?$", cleaned):
-        candidates.append(f"https://www.virtualmanager.com/da/players/{player_id}")
-
-    candidates.append(f"https://www.virtualmanager.com/players/{player_id}")
-
-    unique = []
-    for url in candidates:
-        if url not in unique:
-            unique.append(url)
-    return unique
-
-
-def player_url_from_reference(reference: str) -> str:
-    return player_url_candidates(reference)[0]
-
-
-def training_url_candidates(reference: str) -> list[str]:
-    """Returnér kandidat-URL'er til VMANs træningshistorik for en spiller."""
-    raw = str(reference or "").strip()
-    player_id = extract_player_id(raw)
-
-    if re.fullmatch(r"\d+", raw):
-        return [
-            f"https://www.virtualmanager.com/da/players/{player_id}/training",
-            f"https://www.virtualmanager.com/players/{player_id}/training",
-        ]
-
-    cleaned = _clean_player_url(raw)
     candidates: list[str] = []
 
-    if re.match(r"^https?://", cleaned, flags=re.IGNORECASE):
-        candidates.append(cleaned.rstrip("/") + "/training")
+    if not re.fullmatch(r"\d+", raw):
+        cleaned = _clean_player_url(raw)
+        if re.match(r"^https?://", cleaned, flags=re.IGNORECASE):
+            candidates.append(cleaned)
 
-    candidates.append(f"https://www.virtualmanager.com/da/players/{player_id}/training")
-    candidates.append(f"https://www.virtualmanager.com/players/{player_id}/training")
+    if player_name:
+        for language in ("da", "en", None):
+            candidates.append(build_vman_player_url(player_id, player_name, language=language))
 
-    unique = []
+    candidates.extend([
+        f"https://www.virtualmanager.com/da/players/{player_id}",
+        f"https://www.virtualmanager.com/en/players/{player_id}",
+        f"https://www.virtualmanager.com/players/{player_id}",
+    ])
+
+    unique: list[str] = []
+    for url in candidates:
+        if url and url not in unique:
+            unique.append(url)
+    return unique
+
+
+def player_url_from_reference(reference: str, player_name: str | None = None) -> str:
+    return player_url_candidates(reference, player_name=player_name)[0]
+
+
+def training_url_candidates(reference: str, player_name: str | None = None) -> list[str]:
+    """Return candidate URLs for a player's VMAN training history."""
+    candidates: list[str] = []
+    for profile_url in player_url_candidates(reference, player_name=player_name):
+        if re.match(r"^https?://", profile_url, flags=re.IGNORECASE):
+            candidates.append(profile_url.rstrip("/") + "/training")
+
+    unique: list[str] = []
     for url in candidates:
         if url not in unique:
             unique.append(url)
     return unique
 
 
-def fetch_training_html_from_reference(reference: str, session) -> tuple[str, str]:
-    candidates = training_url_candidates(reference)
+def fetch_training_html_from_reference(reference: str, session, player_name: str | None = None) -> tuple[str, str]:
+    candidates = training_url_candidates(reference, player_name=player_name)
     last_error = None
 
     for url in candidates:
@@ -148,8 +160,8 @@ def fetch_training_html_from_reference(reference: str, session) -> tuple[str, st
     raise RuntimeError(f"Kunne ikke hente træningssiden. Sidste fejl: {last_error}")
 
 
-def fetch_player_html_from_reference(reference: str, session) -> tuple[str, str]:
-    candidates = player_url_candidates(reference)
+def fetch_player_html_from_reference(reference: str, session, player_name: str | None = None) -> tuple[str, str]:
+    candidates = player_url_candidates(reference, player_name=player_name)
     last_error = None
 
     for url in candidates:
@@ -166,7 +178,6 @@ def fetch_player_html_from_reference(reference: str, session) -> tuple[str, str]
         "Kopiér linket fra spillerprofilen og prøv igen. "
         f"Sidste fejl: {last_error}"
     )
-
 
 def normalize_spaces(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
@@ -1973,7 +1984,7 @@ def build_player_debug_bundle(url: str, output_base: str | Path | None = None) -
     )
     return out_dir
 
-def fetch_player_snapshot(url: str) -> PlayerLinkSnapshot:
+def fetch_player_snapshot(url: str, player_name: str | None = None) -> PlayerLinkSnapshot:
     try:
         import requests
     except Exception as error:
@@ -1981,7 +1992,7 @@ def fetch_player_snapshot(url: str) -> PlayerLinkSnapshot:
 
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
-    profile_url, html = fetch_player_html_from_reference(url, session)
+    profile_url, html = fetch_player_html_from_reference(url, session, player_name=player_name)
     snapshot = parse_player_html(html, profile_url)
 
     if snapshot.avatar_url:
@@ -1993,7 +2004,7 @@ def fetch_player_snapshot(url: str) -> PlayerLinkSnapshot:
             snapshot.avatar_content_type = None
 
     try:
-        training_url, training_html = fetch_training_html_from_reference(profile_url, session)
+        training_url, training_html = fetch_training_html_from_reference(profile_url, session, player_name=player_name)
         summary = summarize_training_xp_from_html(training_html)
         snapshot.training_url = training_url
         snapshot.training_xp_average = summary.get("average")

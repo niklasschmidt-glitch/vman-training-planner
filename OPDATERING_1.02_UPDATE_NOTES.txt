@@ -1,0 +1,29 @@
+VMAN TRAINING PLANNER 1.02 – OPDATERING
+
+Version 1.02 er nu klar til både Windows og macOS.
+
+Opdateringen indeholder følgende rettelser og forbedringer:
+
+- XP-hentning for spillere med accenter og nordiske specialtegn er rettet. Programmet bruger nu VMANs faktiske spillerlink, når det findes, og anvender ellers VMANs observerede slugregel, hvor specialtegnet fjernes helt. Manglende XP bliver fortsat behandlet som manglende data og ikke som XP = 0.
+- "Vis graf" er omlagt til et grafvindue inde i selve programmet og fungerer nu ens på macOS og Windows.
+- Markering i Træningsprogram er rettet. Hvis flere sessioner er markeret, og man klikker normalt på én af dem uden at trække, bliver kun den klikkede session markeret. Multi-markering med Cmd/Ctrl/Shift og flytning med drag/drop er bevaret.
+- Spillerlinks kan nu trækkes direkte fra en browser eller anden tekstkilde og slippes i Spillerlink-feltet.
+
+Version 1.02 erstatter version 1.01.
+
+
+============================================================
+
+
+VMAN TRAINING PLANNER 1.02 – UPDATE
+
+Version 1.02 is now available for both Windows and macOS.
+
+This update includes the following fixes and improvements:
+
+- XP retrieval for players whose names contain accented or Nordic characters has been fixed. The application now uses VMAN's actual player link whenever available and otherwise applies VMAN's observed slug rule, where the special character is removed completely. Missing XP is still treated as missing data and never as XP = 0.
+- "Show graph" now opens an embedded graph window inside the application and works consistently on macOS and Windows.
+- Selection in the Training program list has been fixed. If several sessions are selected and one of them is clicked normally without dragging, only the clicked session remains selected. Cmd/Ctrl/Shift multi-selection and drag/drop movement are preserved.
+- Player links can now be dragged directly from a browser or another text source and dropped into the Player link field.
+
+Version 1.02 replaces version 1.01.

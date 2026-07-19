@@ -2,7 +2,7 @@ START HER
 
 1. Dobbeltklik på BUILD_WINDOWS_EXE.bat.
 2. Vent, til der står FAERDIG.
-3. Test exe-filen i mappen dist\VMAN Training Planner 1.01.
-4. Upload VMAN_Training_Planner_1.01_Windows.zip til GitHub Releases.
+3. Test exe-filen i mappen dist\VMAN Training Planner 1.02.
+4. Upload VMAN_Training_Planner_1.02_Windows.zip til GitHub Releases.
 
 Send hele zipfilen til brugerne — ikke kun exe-filen.

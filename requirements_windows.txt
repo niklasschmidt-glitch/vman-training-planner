@@ -3,3 +3,4 @@ matplotlib
 pillow
 requests
 pyinstaller
+tkinterdnd2
